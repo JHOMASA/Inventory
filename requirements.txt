@@ -4,3 +4,4 @@ pandas==2.2.3
 plotly==6.1.2
 fpdf==1.7.2
 pytz==2025.2
+streamlit-aggrid==0.3.4
