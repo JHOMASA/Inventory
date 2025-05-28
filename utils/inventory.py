@@ -48,4 +48,4 @@ def add_inventory_form(df):
 
             insert_inventory_record(data)
             st.success(f"📦 Entry for {product_name} (Batch {batch_id}) saved.")
-            st.experimental_rerun()
+            st.rerun()
