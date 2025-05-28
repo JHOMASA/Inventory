@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 from fpdf import FPDF
 import tempfile
 import os
+import sqlite3
 from datetime import datetime
 
 def pdf_invoice_section(df):
