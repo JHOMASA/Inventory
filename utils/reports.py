@@ -7,6 +7,8 @@ import os
 import sqlite3
 from datetime import datetime
 
+from streamlit_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+
 def pdf_invoice_section(df):
     st.subheader("📄 Generate Invoice PDF")
     if not df.empty:
@@ -14,19 +16,21 @@ def pdf_invoice_section(df):
         batch_df = df[df["product_name"] == selected_product]
         selected_batch = st.selectbox("Select Batch", batch_df["batch_id"].unique())
         data = batch_df[batch_df["batch_id"] == selected_batch]
+        business_id = data["business_id"].iloc[0] if "business_id" in data.columns else "N/A"
         if st.button("📄 Generate PDF Invoice"):
-            path = generate_invoice_pdf(data, selected_product, selected_batch, st.session_state.username)
+            path = generate_invoice_pdf(data, selected_product, selected_batch, st.session_state.username, business_id)
             with open(path, "rb") as f:
                 st.download_button("⬇ Download PDF", f, file_name=os.path.basename(path), mime="application/pdf")
 
-def generate_invoice_pdf(df, product_name, batch_id, username):
+def generate_invoice_pdf(df, product_name, batch_id, username, business_id):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
     pdf.set_font("Arial", style='B', size=16)
     pdf.cell(200, 10, txt="INVENTORY INVOICE", ln=True, align='C')
     pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt=f"User: {username} | Product: {product_name} | Batch: {batch_id}", ln=True, align='C')
+    pdf.cell(200, 10, txt=f"Business: {business_id} | User: {username}", ln=True, align='C')
+    pdf.cell(200, 10, txt=f"Product: {product_name} | Batch: {batch_id}", ln=True, align='C')
     pdf.cell(200, 10, txt=f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True, align='C')
     pdf.ln(10)
     headers = ['Timestamp', 'Stock In', 'Stock Out', 'Total Units', 'Total Price']
@@ -36,11 +40,12 @@ def generate_invoice_pdf(df, product_name, batch_id, username):
     for _, row in df.iterrows():
         timestamp = row.get("timestamp_in") or row.get("timestamp_out")
         pdf.cell(38, 10, str(timestamp)[:19], border=1)
-        pdf.cell(38, 10, str(row["stock_in"]), border=1)
-        pdf.cell(38, 10, str(row["stock_out"]), border=1)
-        pdf.cell(38, 10, str(row["total_units"]), border=1)
-        pdf.cell(38, 10, f"${row['total_price']:.2f}", border=1)
+        pdf.cell(38, 10, str(row.get("stock_in", "")), border=1)
+        pdf.cell(38, 10, str(row.get("stock_out", "")), border=1)
+        pdf.cell(38, 10, str(row.get("total_units", "")), border=1)
+        pdf.cell(38, 10, f"${row.get('total_price', 0):.2f}", border=1)
         pdf.ln()
+    pdf.cell(0, 10, txt="Thank you for using Inventory Manager!", ln=True, align='C')
     temp_dir = tempfile.gettempdir()
     file_path = os.path.join(temp_dir, f"invoice_{product_name}_{batch_id}.pdf")
     pdf.output(file_path)
@@ -67,9 +72,92 @@ def stock_movement_chart(df):
     st.plotly_chart(fig, use_container_width=True)
 
 def inventory_log_view(df):
-    st.subheader("📋 Inventory Log")
-    st.dataframe(df, use_container_width=True)
-    st.download_button("⬇ Download Log CSV", df.to_csv(index=False).encode(), "inventory_log.csv", "text/csv")
+    st.subheader("📋 Editable Inventory Log")
+
+    gb = GridOptionsBuilder.from_dataframe(df)
+    gb.configure_default_column(editable=True, resizable=True)
+    gb.configure_grid_options(enableCellTextSelection=True)
+    grid_options = gb.build()
+
+    grid_response = AgGrid(
+        df,
+        gridOptions=grid_options,
+        update_mode=GridUpdateMode.MANUAL,
+        height=400,
+        fit_columns_on_grid_load=True,
+        use_container_width=True,
+        editable=True
+    )
+
+    updated_df = grid_response["data"]
+
+    if st.button("💾 Save All Changes"):
+        try:
+            conn = sqlite3.connect("data/inventory.db")
+            cursor = conn.cursor()
+
+            for _, row in updated_df.iterrows():
+                cursor.execute("""
+                    UPDATE inventory SET
+                        product_name = ?,
+                        batch_id = ?,
+                        stock_in = ?,
+                        stock_out = ?,
+                        total_stock = ?,
+                        unit_price = ?,
+                        quantity = ?,
+                        total_price = ?,
+                        total_units = ?,
+                        expiration_date = ?
+                    WHERE id = ?
+                """, (
+                    row["product_name"], row["batch_id"], row["stock_in"], row["stock_out"],
+                    row["total_stock"], row["unit_price"], row["quantity"], row["total_price"],
+                    row["total_units"], row["expiration_date"], row["id"]
+                ))
+
+            conn.commit()
+            conn.close()
+            st.success("✅ All changes saved successfully.")
+        except Exception as e:
+            st.error(f"❌ Error saving changes: {e}")
+
+    st.download_button(
+        "⬇ Download Log CSV",
+        updated_df.to_csv(index=False).encode(),
+        "inventory_log.csv",
+        "text/csv"
+    )
+
+def show_product_summary(df):
+    st.subheader("📦 Products Registered Summary")
+    if df.empty:
+        st.info("No product data available.")
+        return
+
+    summary = (
+        df.groupby(['product_id', 'product_name', 'batch_id'])
+        .agg(
+            total_units_accu=pd.NamedAgg(column='total_units', aggfunc='sum'),
+            stock_in=pd.NamedAgg(column='stock_in', aggfunc='sum'),
+            stock_out=pd.NamedAgg(column='stock_out', aggfunc='sum'),
+            total_stock=pd.NamedAgg(column='total_stock', aggfunc='last'),
+            unit_price=pd.NamedAgg(column='unit_price', aggfunc='last'),
+            total_price=pd.NamedAgg(column='total_price', aggfunc='sum'),
+            expiration_date=pd.NamedAgg(column='expiration_date', aggfunc='last'),
+            username=pd.NamedAgg(column='username', aggfunc='last'),
+            business_id=pd.NamedAgg(column='business_id', aggfunc='last')
+        )
+        .reset_index()
+    )
+
+    st.dataframe(summary, use_container_width=True)
+    st.download_button(
+        "⬇ Download Product Summary CSV",
+        summary.to_csv(index=False).encode(),
+        "products_registered_summary.csv",
+        "text/csv"
+    )
 
 def database_explorer():
     conn = sqlite3.connect("data/inventory.db")
@@ -79,10 +167,3 @@ def database_explorer():
     st.download_button(f"⬇ Download {table_choice}.csv", df.to_csv(index=False).encode(), f"{table_choice}.csv", "text/csv")
     conn.close()
 
-def database_explorer():
-    conn = sqlite3.connect("data/inventory.db")
-    table_choice = st.selectbox("View Table", ["inventory", "users"])
-    df = pd.read_sql(f"SELECT * FROM {table_choice}", conn)
-    st.dataframe(df, use_container_width=True)
-    st.download_button(f"⬇ Download {table_choice}.csv", df.to_csv(index=False).encode(), f"{table_choice}.csv", "text/csv")
-    conn.close()
