@@ -67,9 +67,62 @@ def stock_movement_chart(df):
     st.plotly_chart(fig, use_container_width=True)
 
 def inventory_log_view(df):
-    st.subheader("📋 Inventory Log")
-    st.dataframe(df, use_container_width=True)
-    st.download_button("⬇ Download Log CSV", df.to_csv(index=False).encode(), "inventory_log.csv", "text/csv")
+    st.subheader("📋 Editable Inventory Log")
+
+    gb = GridOptionsBuilder.from_dataframe(df)
+    gb.configure_default_column(editable=True, resizable=True)
+    gb.configure_grid_options(enableCellTextSelection=True)
+    grid_options = gb.build()
+
+    grid_response = AgGrid(
+        df,
+        gridOptions=grid_options,
+        update_mode=GridUpdateMode.MANUAL,
+        height=400,
+        fit_columns_on_grid_load=True,
+        use_container_width=True,
+        editable=True
+    )
+
+    updated_df = grid_response["data"]
+
+    if st.button("💾 Save All Changes"):
+        try:
+            conn = sqlite3.connect("data/inventory.db")
+            cursor = conn.cursor()
+
+            for _, row in updated_df.iterrows():
+                cursor.execute("""
+                    UPDATE inventory SET
+                        product_name = ?,
+                        batch_id = ?,
+                        stock_in = ?,
+                        stock_out = ?,
+                        total_stock = ?,
+                        unit_price = ?,
+                        quantity = ?,
+                        total_price = ?,
+                        total_units = ?,
+                        expiration_date = ?
+                    WHERE id = ?
+                """, (
+                    row["product_name"], row["batch_id"], row["stock_in"], row["stock_out"],
+                    row["total_stock"], row["unit_price"], row["quantity"], row["total_price"],
+                    row["total_units"], row["expiration_date"], row["id"]
+                ))
+
+            conn.commit()
+            conn.close()
+            st.success("✅ All changes saved successfully.")
+        except Exception as e:
+            st.error(f"❌ Error saving changes: {e}")
+
+    st.download_button(
+        "⬇ Download Log CSV",
+        updated_df.to_csv(index=False).encode(),
+        "inventory_log.csv",
+        "text/csv"
+    )
 
 def database_explorer():
     conn = sqlite3.connect("data/inventory.db")
