@@ -7,8 +7,6 @@ import os
 import sqlite3
 from datetime import datetime
 
-from streamlit_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-
 def pdf_invoice_section(df):
     st.subheader("📄 Generate Invoice PDF")
     if not df.empty:
@@ -74,29 +72,14 @@ def stock_movement_chart(df):
 def inventory_log_view(df):
     st.subheader("📋 Editable Inventory Log")
 
-    gb = GridOptionsBuilder.from_dataframe(df)
-    gb.configure_default_column(editable=True, resizable=True)
-    gb.configure_grid_options(enableCellTextSelection=True)
-    grid_options = gb.build()
-
-    grid_response = AgGrid(
-        df,
-        gridOptions=grid_options,
-        update_mode=GridUpdateMode.MANUAL,
-        height=400,
-        fit_columns_on_grid_load=True,
-        use_container_width=True,
-        editable=True
-    )
-
-    updated_df = grid_response["data"]
+    edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic")
 
     if st.button("💾 Save All Changes"):
         try:
             conn = sqlite3.connect("data/inventory.db")
             cursor = conn.cursor()
 
-            for _, row in updated_df.iterrows():
+            for _, row in edited_df.iterrows():
                 cursor.execute("""
                     UPDATE inventory SET
                         product_name = ?,
@@ -124,7 +107,7 @@ def inventory_log_view(df):
 
     st.download_button(
         "⬇ Download Log CSV",
-        updated_df.to_csv(index=False).encode(),
+        edited_df.to_csv(index=False).encode(),
         "inventory_log.csv",
         "text/csv"
     )
